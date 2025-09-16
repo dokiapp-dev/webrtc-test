@@ -57,111 +57,119 @@
 
     async function testICE() {
       log("Running ICE connectivity test with STUN/TURN...");
-      try {
-        const pc = new RTCPeerConnection({
-          iceServers: [
-            { urls: "stun:global.stun.twilio.com:3478" },
-            { urls: "stun:stun.l.google.com:19302" }
-            // Add TURN here with credentials if you want relay testing
-          ]
-        });
+      return new Promise(async (resolve) => {
+        try {
+          const pc = new RTCPeerConnection({
+            iceServers: [
+              { urls: "stun:global.stun.twilio.com:3478" },
+              { urls: "stun:stun.l.google.com:19302" }
+              // Add TURN here with credentials if you want relay testing
+            ]
+          });
 
-        pc.createDataChannel("test"); // triggers ICE
+          pc.createDataChannel("test"); // triggers ICE
 
-        pc.onicecandidate = (event) => {
-          if (event.candidate) {
-            log(`ICE candidate: ${event.candidate.type} via ${event.candidate.protocol}`);
-          }
-        };
+          pc.onicecandidate = (event) => {
+            if (event.candidate) {
+              log(`ICE candidate: ${event.candidate.type} via ${event.candidate.protocol}`);
+            }
+          };
 
-        const offer = await pc.createOffer();
-        await pc.setLocalDescription(offer);
+          const offer = await pc.createOffer();
+          await pc.setLocalDescription(offer);
 
-        setTimeout(() => {
-          pc.close();
-          log("✅ ICE test finished", "ok");
-        }, 5000);
-      } catch (err) {
-        log("❌ ICE test failed: " + err.message, "fail");
-      }
+          setTimeout(() => {
+            pc.close();
+            log("✅ ICE test finished", "ok");
+            resolve();
+          }, 5000);
+        } catch (err) {
+          log("❌ ICE test failed: " + err.message, "fail");
+          resolve();
+        }
+      });
     }
 
     async function testCallQuality(durationMs = 5000) {
       log("Running bandwidth & call quality test...");
 
-      let pc1, pc2, localStream;
-      try {
-        pc1 = new RTCPeerConnection();
-        pc2 = new RTCPeerConnection();
+      return new Promise(async (resolve) => {
+        let pc1, pc2, localStream;
+        try {
+          pc1 = new RTCPeerConnection();
+          pc2 = new RTCPeerConnection();
 
-        localStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: true });
-        localStream.getTracks().forEach(track => pc1.addTrack(track, localStream));
+          localStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: true });
+          localStream.getTracks().forEach(track => pc1.addTrack(track, localStream));
 
-        pc1.onicecandidate = e => e.candidate && pc2.addIceCandidate(e.candidate);
-        pc2.onicecandidate = e => e.candidate && pc1.addIceCandidate(e.candidate);
+          pc1.onicecandidate = e => e.candidate && pc2.addIceCandidate(e.candidate);
+          pc2.onicecandidate = e => e.candidate && pc1.addIceCandidate(e.candidate);
 
-        pc2.ontrack = e => {
-          // We receive remote media here (ignored, loopback only)
-        };
+          pc2.ontrack = e => {
+            // We receive remote media here (ignored, loopback only)
+          };
 
-        const offer = await pc1.createOffer();
-        await pc1.setLocalDescription(offer);
-        await pc2.setRemoteDescription(offer);
+          const offer = await pc1.createOffer();
+          await pc1.setLocalDescription(offer);
+          await pc2.setRemoteDescription(offer);
 
-        const answer = await pc2.createAnswer();
-        await pc2.setLocalDescription(answer);
-        await pc1.setRemoteDescription(answer);
+          const answer = await pc2.createAnswer();
+          await pc2.setLocalDescription(answer);
+          await pc1.setRemoteDescription(answer);
 
-        // Collect stats for a few seconds
-        const statsResults = [];
-        const start = Date.now();
+          // Collect stats for a few seconds
+          const statsResults = [];
+          const start = Date.now();
 
-        const collect = async () => {
-          const stats = await pc1.getStats(null);
-          stats.forEach(report => {
-            if (report.type === "outbound-rtp" && !report.isRemote) {
-              statsResults.push({
-                timestamp: report.timestamp,
-                bitrate: report.bytesSent,
-                packetsSent: report.packetsSent,
-                packetsLost: report.packetsLost || 0,
-                jitter: report.jitter || 0,
-                roundTripTime: report.roundTripTime || 0
-              });
+          const collect = async () => {
+            const stats = await pc1.getStats(null);
+            stats.forEach(report => {
+              if (report.type === "outbound-rtp" && !report.isRemote) {
+                statsResults.push({
+                  timestamp: report.timestamp,
+                  bitrate: report.bytesSent,
+                  packetsSent: report.packetsSent,
+                  packetsLost: report.packetsLost || 0,
+                  jitter: report.jitter || 0,
+                  roundTripTime: report.roundTripTime || 0
+                });
+              }
+            });
+          };
+
+          const interval = setInterval(collect, 1000);
+
+          setTimeout(async () => {
+            clearInterval(interval);
+            await collect();
+
+            if (statsResults.length > 1) {
+              const first = statsResults[0];
+              const last = statsResults[statsResults.length - 1];
+              const bytesSent = last.bitrate - first.bitrate;
+              const bitrateKbps = (bytesSent * 8) / ((last.timestamp - first.timestamp) / 1000) / 1000;
+
+              log(`✅ Estimated upload bitrate: ${bitrateKbps.toFixed(1)} kbps`, "ok");
+              log(`ℹ️ Packets sent: ${last.packetsSent}, lost: ${last.packetsLost}`, "info");
+              log(`ℹ️ Jitter: ${last.jitter}`, "info");
+              log(`ℹ️ RTT: ${last.roundTripTime}`, "info");
+            } else {
+              log("❌ Not enough stats collected", "fail");
             }
-          });
-        };
 
-        const interval = setInterval(collect, 1000);
-
-        setTimeout(async () => {
-          clearInterval(interval);
-          await collect();
-
-          if (statsResults.length > 1) {
-            const first = statsResults[0];
-            const last = statsResults[statsResults.length - 1];
-            const bytesSent = last.bitrate - first.bitrate;
-            const bitrateKbps = (bytesSent * 8) / ((last.timestamp - first.timestamp) / 1000) / 1000;
-
-            log(`✅ Estimated upload bitrate: ${bitrateKbps.toFixed(1)} kbps`, "ok");
-            log(`ℹ️ Packets sent: ${last.packetsSent}, lost: ${last.packetsLost}`, "info");
-            log(`ℹ️ Jitter: ${last.jitter}`, "info");
-            log(`ℹ️ RTT: ${last.roundTripTime}`, "info");
-          } else {
-            log("❌ Not enough stats collected", "fail");
-          }
-
-          localStream.getTracks().forEach(t => t.stop());
-          pc1.close();
-          pc2.close();
-        }, durationMs);
-      } catch (err) {
-        log("❌ Quality test failed: " + err.message, "fail");
-        if (localStream) localStream.getTracks().forEach(t => t.stop());
-        if (pc1) pc1.close();
-        if (pc2) pc2.close();
-      }
+            localStream.getTracks().forEach(t => t.stop());
+            pc1.close();
+            pc2.close();
+            resolve();
+          }, durationMs);
+        } catch (err) {
+          log("❌ Quality test failed: " + err.message, "fail");
+          if (localStream) localStream.getTracks().forEach(t => t.stop());
+          if (pc1) pc1.close();
+          if (pc2) pc2.close();
+          resolve();
+        }
+      });
     }
 
     async function runDiagnostic() {
