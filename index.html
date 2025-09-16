@@ -62,8 +62,12 @@
           const pc = new RTCPeerConnection({
             iceServers: [
               { urls: "stun:global.stun.twilio.com:3478" },
-              { urls: "stun:stun.l.google.com:19302" }
-              // Add TURN here with credentials if you want relay testing
+              { urls: "stun:stun.l.google.com:19302" },
+              // {
+              //   urls: "turn:global.turn.twilio.com:3478",
+              //   username: "your_twilio_username",
+              //   credential: "your_twilio_credential"
+              // }
             ]
           });
 
@@ -71,7 +75,8 @@
 
           pc.onicecandidate = (event) => {
             if (event.candidate) {
-              log(`ICE candidate: ${event.candidate.type} via ${event.candidate.protocol}`);
+              console.dir(event);
+              log(`ICE candidate: ${event.candidate.type} via ${event.candidate.protocol} (${event.candidate.address}:${event.candidate.candidate})`);
             }
           };
 
